@@ -21,21 +21,24 @@
   .legend-item { display: flex; align-items: center; gap: 5px; font-size: 12px; color: #666; }
   .legend-dot { width: 10px; height: 10px; border-radius: 2px; }
   .chart-wrap { overflow-x: auto; }
-  .chart { position: relative; min-width: 600px; }
-  .row { display: flex; align-items: center; height: 42px; border-radius: 4px; }
-  .row:nth-child(even) { background: #f1f0eb; }
-  .row-label { width: 190px; padding-right: 10px; flex-shrink: 0; }
+  .chart { position: relative; min-width: 600px; background: white; border-radius: 8px; border: 0.5px solid #e0e0e0; padding: 8px 0; }
+  .row { display: flex; align-items: center; height: 42px; position: relative; }
+  .row:nth-child(even) { background: rgba(0,0,0,0.015); }
+  .row-label { width: 190px; padding: 0 10px 0 12px; flex-shrink: 0; z-index: 2; }
   .row-label .name { font-size: 11px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .row-label .sub { font-size: 10px; color: #999; }
   .row-bars { flex: 1; position: relative; height: 42px; }
-  .bar { position: absolute; top: 8px; height: 26px; border-radius: 3px; opacity: 0.85; cursor: default; }
-  .axis { display: flex; height: 32px; margin-top: 2px; }
+  .bar { position: absolute; top: 8px; height: 26px; border-radius: 3px; opacity: 0.9; cursor: default; z-index: 2; }
+  .shade { position: absolute; top: 0; bottom: 0; z-index: 1; pointer-events: none; }
+  .shade-offhours { background: repeating-linear-gradient(135deg, rgba(0,0,0,0.04) 0px, rgba(0,0,0,0.04) 3px, transparent 3px, transparent 8px); }
+  .shade-weekend { background: repeating-linear-gradient(135deg, rgba(0,0,0,0.08) 0px, rgba(0,0,0,0.08) 3px, transparent 3px, transparent 8px); }
+  .day-line { position: absolute; top: 0; bottom: 0; border-left: 1px solid #555; opacity: 0.25; pointer-events: none; z-index: 3; }
+  .axis { display: flex; height: 32px; margin-top: 4px; }
   .axis-spacer { width: 190px; flex-shrink: 0; }
   .axis-labels { flex: 1; position: relative; }
   .axis-label { position: absolute; font-size: 10px; color: #aaa; transform: translateX(-50%) rotate(-30deg); transform-origin: top center; white-space: nowrap; top: 6px; }
-  .gridline { position: absolute; top: 0; bottom: 28px; border-left: 0.5px solid #e0e0e0; pointer-events: none; width: 0; }
-  .sprint-label { position: absolute; left: 0; display: flex; align-items: center; pointer-events: none; }
-  .sprint-label-inner { font-size: 10px; font-weight: 500; color: #bbb; text-transform: uppercase; letter-spacing: 0.06em; border-left: 2px solid #ddd; padding-left: 6px; }
+  .sprint-label { position: absolute; left: 0; display: flex; align-items: center; pointer-events: none; z-index: 4; }
+  .sprint-label-inner { font-size: 10px; font-weight: 500; color: #bbb; text-transform: uppercase; letter-spacing: 0.06em; border-left: 2px solid #ddd; padding-left: 6px; margin-left: 12px; }
   .tooltip { position: fixed; background: white; border: 0.5px solid #ddd; border-radius: 8px; padding: 8px 12px; font-size: 12px; pointer-events: none; z-index: 999; min-width: 200px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); display: none; }
   .tooltip-title { font-weight: 500; margin-bottom: 4px; }
   .tooltip-status { margin-bottom: 2px; }
@@ -66,6 +69,7 @@ const MIN_SEC = 10;
 const WORKING_HOURS = {
   "Márcio Costa":    { start: 10, end: 19, tz: 1 },
   "Adriaan Rossouw": { start: 5.25, end: 12.5, tz: 2 },
+  "default":         { start: 10, end: 19, tz: 1 },
 };
 
 const STATUS_COLORS = {
@@ -77,12 +81,12 @@ const STATUS_COLORS = {
 };
 
 function toLocal(utcStr, assignee) {
-  const tz = (WORKING_HOURS[assignee] || { tz: 0 }).tz;
+  const tz = (WORKING_HOURS[assignee] || WORKING_HOURS.default).tz;
   return new Date(new Date(utcStr).getTime() + tz * 3600000);
 }
 
 function workingMs(from, to, assignee, status) {
-  const w = (status === "internal review") ? { start: 10, end: 19 } : (WORKING_HOURS[assignee] || { start: 9, end: 18 });
+  const w = (status === "internal review") ? { start: 10, end: 19 } : (WORKING_HOURS[assignee] || WORKING_HOURS.default);
   let total = 0, cur = new Date(from);
   while (cur < to) {
     const day = cur.getDay();
@@ -124,6 +128,47 @@ function buildTasks(events) {
   return Object.values(byId).filter(t => t.segments.length > 0);
 }
 
+// Build shade segments (off-hours + weekends) between minDate and maxDate
+function buildShadeSegments(minDate, maxDate, workHours) {
+  const segments = [];
+  let cur = new Date(minDate);
+  cur.setMinutes(0, 0, 0);
+
+  while (cur < maxDate) {
+    const day = cur.getDay();
+    const isWeekend = day === 0 || day === 6;
+
+    if (isWeekend) {
+      // shade entire day as weekend
+      const dayEnd = new Date(cur); dayEnd.setDate(dayEnd.getDate() + 1); dayEnd.setHours(0, 0, 0, 0);
+      const s = new Date(Math.max(cur, minDate));
+      const e = new Date(Math.min(dayEnd, maxDate));
+      if (e > s) segments.push({ start: s, end: e, type: "weekend" });
+      cur = dayEnd;
+    } else {
+      const wsH = Math.floor(workHours.start), wsM = (workHours.start % 1) * 60;
+      const weH = Math.floor(workHours.end), weM = (workHours.end % 1) * 60;
+      const dayStart = new Date(cur); dayStart.setHours(0, 0, 0, 0);
+      const workStart = new Date(cur); workStart.setHours(wsH, wsM, 0, 0);
+      const workEnd = new Date(cur); workEnd.setHours(weH, weM, 0, 0);
+      const dayEnd = new Date(cur); dayEnd.setDate(dayEnd.getDate() + 1); dayEnd.setHours(0, 0, 0, 0);
+
+      // before work
+      const bs = new Date(Math.max(dayStart, minDate));
+      const be = new Date(Math.min(workStart, maxDate));
+      if (be > bs) segments.push({ start: bs, end: be, type: "offhours" });
+
+      // after work
+      const as_ = new Date(Math.max(workEnd, minDate));
+      const ae = new Date(Math.min(dayEnd, maxDate));
+      if (ae > as_) segments.push({ start: as_, end: ae, type: "offhours" });
+
+      cur = dayEnd;
+    }
+  }
+  return segments;
+}
+
 function parseCSV(text) {
   const lines = text.trim().split("\n").slice(1);
   return lines.map(line => {
@@ -140,15 +185,30 @@ function render(events, activeSprint, activeAssignee) {
     .filter(t => activeSprint === "All" || t.sprint === activeSprint)
     .filter(t => activeAssignee === "All" || t.assignee === activeAssignee);
 
+  if (!tasks.length) { document.getElementById("app").innerHTML = "<p style='color:#aaa;padding:20px'>No tasks found for this filter.</p>"; return; }
+
   const allDates = tasks.flatMap(t => t.segments.flatMap(s => [s.start, s.end]));
   const minDate = new Date(Math.min(...allDates));
   const maxDate = new Date(Math.max(...allDates));
   const totalMs = maxDate - minDate;
   const pct = d => ((d - minDate) / totalMs) * 100;
 
+  // Determine working hours for shading
+  const shadeHours = (activeAssignee !== "All" && WORKING_HOURS[activeAssignee])
+    ? WORKING_HOURS[activeAssignee]
+    : WORKING_HOURS.default;
+
+  const shadeSegs = buildShadeSegments(minDate, maxDate, shadeHours);
+
+  // Day boundary lines
+  const dayLines = [];
+  let dl = new Date(minDate); dl.setDate(dl.getDate() + 1); dl.setHours(0, 0, 0, 0);
+  while (dl < maxDate) { dayLines.push(new Date(dl)); dl.setDate(dl.getDate() + 1); }
+
+  // Axis ticks
   const axisDays = [];
-  let d = new Date(minDate); d.setHours(0, 0, 0, 0);
-  while (d <= maxDate) { if (d.getDay() !== 0 && d.getDay() !== 6) axisDays.push(new Date(d)); d.setDate(d.getDate() + 1); }
+  let ad = new Date(minDate); ad.setHours(0, 0, 0, 0);
+  while (ad <= maxDate) { if (ad.getDay() !== 0 && ad.getDay() !== 6) axisDays.push(new Date(ad)); ad.setDate(ad.getDate() + 1); }
   const step = Math.ceil(axisDays.length / 8);
   const ticks = axisDays.filter((_, i) => i % step === 0);
 
@@ -172,6 +232,18 @@ function render(events, activeSprint, activeAssignee) {
   }
 
   const ROW_H = 42;
+  const totalRows = tasks.length;
+  const chartH = totalRows * ROW_H;
+
+  const shadeHTML = shadeSegs.map(s => {
+    const l = pct(s.start), w = Math.max(0, pct(s.end) - pct(s.start));
+    return `<div class="shade shade-${s.type}" style="left:${l}%;width:${w}%;top:0;height:${chartH}px;position:absolute;z-index:1;pointer-events:none"></div>`;
+  }).join("");
+
+  const dayLineHTML = dayLines.map(d => {
+    const l = pct(d);
+    return `<div class="day-line" style="left:${l}%;height:${chartH}px"></div>`;
+  }).join("");
 
   const app = document.getElementById("app");
   app.innerHTML = `
@@ -198,23 +270,27 @@ function render(events, activeSprint, activeAssignee) {
     </div>
     <div class="legend">
       ${Object.entries(STATUS_COLORS).map(([, c]) => `<div class="legend-item"><div class="legend-dot" style="background:${c.bar}"></div>${c.label}</div>`).join("")}
+      <div class="legend-item"><div class="legend-dot" style="background:repeating-linear-gradient(135deg,rgba(0,0,0,0.15) 0px,rgba(0,0,0,0.15) 3px,transparent 3px,transparent 8px);border:0.5px solid #ddd"></div>Off hours / weekend</div>
     </div>
     <div class="chart-wrap">
-      <div class="chart" id="chart">
-        ${ticks.map(t => `<div class="gridline" style="left:calc(190px + ${pct(t)}%)"></div>`).join("")}
+      <div class="chart" id="chart" style="position:relative">
+        <div style="position:absolute;left:190px;right:0;top:0;height:${chartH}px;overflow:hidden">
+          ${shadeHTML}
+          ${dayLineHTML}
+        </div>
         ${tasks.map((task, i) => `
-          <div class="row" style="background:${i % 2 === 0 ? "transparent" : "#f1f0eb"}">
+          <div class="row">
             <div class="row-label">
               <div class="name">${task.name}</div>
               <div class="sub">${task.assignee.split(" ")[0]} · ${task.pts}pt${task.pts !== 1 ? "s" : ""}</div>
             </div>
             <div class="row-bars">
-              ${task.segments.map((seg, j) => {
+              ${task.segments.map(seg => {
                 const left = pct(seg.start), width = Math.max(0.4, pct(seg.end) - pct(seg.start));
                 const c = STATUS_COLORS[seg.status];
                 const wm = workingMs(seg.start, seg.end, task.assignee, seg.status);
-                return `<div class="bar" style="left:${left}%;width:${width}%;background:${c.bar}" 
-                  data-task="${task.name.replace(/"/g,'&quot;')}" 
+                return `<div class="bar" style="left:${left}%;width:${width}%;background:${c.bar}"
+                  data-task="${task.name.replace(/"/g,'&quot;')}"
                   data-assignee="${task.assignee}"
                   data-status="${seg.status}"
                   data-wm="${fmtMs(wm)}"
@@ -236,21 +312,19 @@ function render(events, activeSprint, activeAssignee) {
         </div>
       </div>
     </div>
-    <div class="note">Timestamps converted to local time per assignee (Márcio UTC+1 · Adriaan UTC+2). Blocked transitions &lt;10s filtered out. Internal review uses 10h–19h window.</div>
+    <div class="note">Timestamps converted to local time per assignee (Márcio UTC+1 · Adriaan UTC+2). Shading reflects off-hours for ${activeAssignee === "All" ? "default schedule (10h–19h)" : activeAssignee}. Blocked transitions &lt;10s filtered out.</div>
   `;
   app.style.display = "block";
 }
 
 function showTip(e) {
-  const t = document.getElementById("tooltip");
-  const b = e.target;
+  const t = document.getElementById("tooltip"), b = e.target;
   document.getElementById("tt-title").textContent = b.dataset.task;
   document.getElementById("tt-status").textContent = STATUS_COLORS[b.dataset.status].label;
   document.getElementById("tt-status").style.color = STATUS_COLORS[b.dataset.status].bar;
   document.getElementById("tt-time").textContent = "Working time: " + b.dataset.wm;
   document.getElementById("tt-range").textContent = b.dataset.start + " → " + b.dataset.end;
-  t.style.display = "block";
-  moveTip(e);
+  t.style.display = "block"; moveTip(e);
 }
 function moveTip(e) {
   const t = document.getElementById("tooltip");
@@ -259,12 +333,9 @@ function moveTip(e) {
 }
 function hideTip() { document.getElementById("tooltip").style.display = "none"; }
 
-let allEvents = [];
-let activeSprint = "All";
-let activeAssignee = "All";
+let allEvents = [], activeSprint = "All", activeAssignee = "All";
 function rerender(sprint, assignee) {
-  activeSprint = sprint;
-  activeAssignee = assignee;
+  activeSprint = sprint; activeAssignee = assignee;
   render(allEvents, activeSprint, activeAssignee);
 }
 
@@ -283,7 +354,6 @@ async function load() {
     document.getElementById("error").textContent = "Could not load data. Make sure the Google Sheet is shared publicly (Anyone with link → Viewer).";
   }
 }
-
 load();
 </script>
 </body>
