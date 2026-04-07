@@ -122,8 +122,8 @@ function buildTasks(events) {
     if (!byId[ev.id]) byId[ev.id] = { id: ev.id, name: ev.name, assignee: ev.assignee, sprint: ev.sprint, pts: ev.pts, segments: [] };
     const start = toLocal(ev.ts, ev.assignee);
     const nextEv = sorted.slice(i + 1).find(e => e.id === ev.id);
-    const end = nextEv ? toLocal(nextEv.ts, ev.assignee) : new Date(start.getTime() + 3600000);
-    byId[ev.id].segments.push({ status: ev.to, start, end });
+    const end = nextEv ? toLocal(nextEv.ts, ev.assignee) : new Date();
+    byId[ev.id].segments.push({ status: ev.to, start, end, isActive: !nextEv });
   });
   return Object.values(byId).filter(t => t.segments.length > 0);
 }
@@ -289,10 +289,11 @@ function render(events, activeSprint, activeAssignee) {
                 const left = pct(seg.start), width = Math.max(0.4, pct(seg.end) - pct(seg.start));
                 const c = STATUS_COLORS[seg.status];
                 const wm = workingMs(seg.start, seg.end, task.assignee, seg.status);
-                return `<div class="bar" style="left:${left}%;width:${width}%;background:${c.bar}"
+                return `<div class="bar" style="left:${left}%;width:${width}%;background:${c.bar};${seg.isActive ? `outline:2px solid ${c.bar};outline-offset:1px;opacity:1` : ''}"
                   data-task="${task.name.replace(/"/g,'&quot;')}"
                   data-assignee="${task.assignee}"
                   data-status="${seg.status}"
+                  data-active="${seg.isActive ? 'true' : 'false'}"
                   data-wm="${fmtMs(wm)}"
                   data-start="${fmtFull(seg.start)}"
                   data-end="${fmtFull(seg.end)}"
@@ -322,7 +323,7 @@ function showTip(e) {
   document.getElementById("tt-title").textContent = b.dataset.task;
   document.getElementById("tt-status").textContent = STATUS_COLORS[b.dataset.status].label;
   document.getElementById("tt-status").style.color = STATUS_COLORS[b.dataset.status].bar;
-  document.getElementById("tt-time").textContent = "Working time: " + b.dataset.wm;
+  document.getElementById("tt-time").textContent = "Working time: " + b.dataset.wm + (b.dataset.active === "true" ? " (ongoing)" : "");
   document.getElementById("tt-range").textContent = b.dataset.start + " → " + b.dataset.end;
   t.style.display = "block"; moveTip(e);
 }
