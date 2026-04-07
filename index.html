@@ -119,7 +119,8 @@ function buildTasks(events) {
       const nextEv = sorted.slice(i + 1).find(e => e.id === ev.id);
       if (nextEv && (new Date(nextEv.ts) - new Date(ev.ts)) / 1000 < MIN_SEC) return;
     }
-    if (!byId[ev.id]) byId[ev.id] = { id: ev.id, name: ev.name, assignee: ev.assignee, sprint: ev.sprint, pts: ev.pts, segments: [] };
+    if (!byId[ev.id]) byId[ev.id] = { id: ev.id, name: ev.name, assignee: ev.assignee, sprint: ev.sprint, pts: ev.pts, segments: [], sprints: new Set() };
+    byId[ev.id].sprints.add(ev.sprint);
     const start = toLocal(ev.ts, ev.assignee);
     const nextEv = sorted.slice(i + 1).find(e => e.id === ev.id);
     const isComplete = ev.to === "complete";
@@ -185,7 +186,7 @@ function render(events, activeSprint, activeAssignee) {
   const sprints = [...new Set(allTasks.map(t => t.sprint))];
   const assignees = [...new Set(allTasks.map(t => t.assignee))];
   const tasks = allTasks
-    .filter(t => activeSprint === "All" || t.sprint === activeSprint)
+    .filter(t => activeSprint === "All" || t.sprints.has(activeSprint))
     .filter(t => activeAssignee === "All" || t.assignee === activeAssignee);
 
   if (!tasks.length) { document.getElementById("app").innerHTML = "<p style='color:#aaa;padding:20px'>No tasks found for this filter.</p>"; return; }
