@@ -173,7 +173,21 @@ function buildShadeSegments(minDate, maxDate, workHours) {
   return segments;
 }
 
-function parseCSV(text) {
+// Parse sprint date range from name e.g. "Sprint 3 (3/25 - 3/31)"
+function parseSprintDates(sprintName) {
+  const m = sprintName.match(/\((\d+)\/(\d+)\s*-\s*(\d+)\/(\d+)\)/);
+  if (!m) return null;
+  const year = new Date().getFullYear();
+  const start = new Date(year, parseInt(m[1])-1, parseInt(m[2]), 0, 0, 0);
+  const end   = new Date(year, parseInt(m[3])-1, parseInt(m[4]), 23, 59, 59);
+  return { start, end };
+}
+
+function taskOverlapsSprint(task, sprintName) {
+  const range = parseSprintDates(sprintName);
+  if (!range) return task.sprints.has(sprintName);
+  return task.segments.some(s => s.start <= range.end && s.end >= range.start);
+}
   const lines = text.trim().split("\n").slice(1);
   return lines.map(line => {
     const cols = line.split(",").map(c => c.replace(/^"|"$/g, "").trim());
@@ -186,7 +200,7 @@ function render(events, activeSprint, activeAssignee) {
   const sprints = [...new Set(allTasks.map(t => t.sprint))];
   const assignees = [...new Set(allTasks.map(t => t.assignee))];
   const tasks = allTasks
-    .filter(t => activeSprint === "All" || t.sprints.has(activeSprint))
+    .filter(t => activeSprint === "All" || taskOverlapsSprint(t, activeSprint))
     .filter(t => activeAssignee === "All" || t.assignee === activeAssignee);
 
   if (!tasks.length) { document.getElementById("app").innerHTML = "<p style='color:#aaa;padding:20px'>No tasks found for this filter.</p>"; return; }
