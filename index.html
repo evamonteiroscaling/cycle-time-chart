@@ -131,10 +131,13 @@ function parseCSV(text) {
   }).filter(r => r.id && r.ts);
 }
 
-function render(events, activeSprint) {
+function render(events, activeSprint, activeAssignee) {
   const allTasks = buildTasks(events);
   const sprints = [...new Set(allTasks.map(t => t.sprint))];
-  const tasks = activeSprint === "All" ? allTasks : allTasks.filter(t => t.sprint === activeSprint);
+  const assignees = [...new Set(allTasks.map(t => t.assignee))];
+  const tasks = allTasks
+    .filter(t => activeSprint === "All" || t.sprint === activeSprint)
+    .filter(t => activeAssignee === "All" || t.assignee === activeAssignee);
 
   const allDates = tasks.flatMap(t => t.segments.flatMap(s => [s.start, s.end]));
   const minDate = new Date(Math.min(...allDates));
@@ -172,7 +175,14 @@ function render(events, activeSprint) {
   const app = document.getElementById("app");
   app.innerHTML = `
     <div class="filters">
-      ${["All", ...sprints].map(s => `<button class="filter-btn ${activeSprint === s ? "active" : ""}" onclick="rerender('${s}')">${s}</button>`).join("")}
+      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+        <span style="font-size:11px;color:#aaa;margin-right:2px">Sprint</span>
+        ${["All", ...sprints].map(s => `<button class="filter-btn ${activeSprint === s ? "active" : ""}" onclick="rerender('${s}', activeAssignee)">${s}</button>`).join("")}
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:8px">
+        <span style="font-size:11px;color:#aaa;margin-right:2px">Assignee</span>
+        ${["All", ...assignees].map(a => `<button class="filter-btn ${activeAssignee === a ? "active" : ""}" onclick="rerender(activeSprint, '${a}')">${a === "All" ? "All" : a.split(" ")[0]}</button>`).join("")}
+      </div>
     </div>
     <div class="cards">
       <div class="card"><div class="card-label">Avg cycle time</div><div class="card-value">${avgCycle}</div><div class="card-sub">working hrs in progress</div></div>
@@ -243,7 +253,13 @@ function moveTip(e) {
 function hideTip() { document.getElementById("tooltip").style.display = "none"; }
 
 let allEvents = [];
-function rerender(sprint) { render(allEvents, sprint); }
+let activeSprint = "All";
+let activeAssignee = "All";
+function rerender(sprint, assignee) {
+  activeSprint = sprint;
+  activeAssignee = assignee;
+  render(allEvents, activeSprint, activeAssignee);
+}
 
 async function load() {
   const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(SHEET_NAME)}`;
@@ -253,7 +269,7 @@ async function load() {
     const text = await res.text();
     allEvents = parseCSV(text);
     document.getElementById("loading").style.display = "none";
-    render(allEvents, "All");
+    render(allEvents, "All", "All");
   } catch(e) {
     document.getElementById("loading").style.display = "none";
     document.getElementById("error").style.display = "block";
