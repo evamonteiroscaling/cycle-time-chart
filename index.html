@@ -29,10 +29,6 @@
   .row-label .sub { font-size: 10px; color: #999; }
   .row-bars { flex: 1; position: relative; height: 42px; }
   .bar { position: absolute; top: 8px; height: 26px; border-radius: 3px; opacity: 0.9; cursor: default; z-index: 2; }
-  .shade { position: absolute; top: 0; bottom: 0; z-index: 1; pointer-events: none; }
-  .shade-offhours { background: repeating-linear-gradient(135deg, rgba(0,0,0,0.04) 0px, rgba(0,0,0,0.04) 3px, transparent 3px, transparent 8px); }
-  .shade-weekend { background: repeating-linear-gradient(135deg, rgba(0,0,0,0.08) 0px, rgba(0,0,0,0.08) 3px, transparent 3px, transparent 8px); }
-  .day-line { position: absolute; top: 0; bottom: 0; border-left: 1px solid #555; opacity: 0.25; pointer-events: none; z-index: 3; }
   .axis { display: flex; height: 32px; margin-top: 4px; }
   .axis-spacer { width: 190px; flex-shrink: 0; }
   .axis-labels { flex: 1; position: relative; }
@@ -81,20 +77,20 @@ const STATUS_COLORS = {
 };
 
 function toLocal(utcStr, assignee) {
-  const tz = (WORKING_HOURS[assignee] || WORKING_HOURS.default).tz;
+  var tz = (WORKING_HOURS[assignee] || WORKING_HOURS["default"]).tz;
   return new Date(new Date(utcStr).getTime() + tz * 3600000);
 }
 
 function workingMs(from, to, assignee, status) {
-  const w = (status === "internal review") ? { start: 10, end: 19 } : (WORKING_HOURS[assignee] || WORKING_HOURS.default);
-  let total = 0, cur = new Date(from);
+  var w = (status === "internal review") ? { start: 10, end: 19 } : (WORKING_HOURS[assignee] || WORKING_HOURS["default"]);
+  var total = 0, cur = new Date(from);
   while (cur < to) {
-    const day = cur.getDay();
+    var day = cur.getDay();
     if (day !== 0 && day !== 6) {
-      const ws = new Date(cur); ws.setHours(Math.floor(w.start), (w.start % 1) * 60, 0, 0);
-      const we = new Date(cur); we.setHours(Math.floor(w.end), (w.end % 1) * 60, 0, 0);
-      const s = new Date(Math.max(cur, ws, from));
-      const e = new Date(Math.min(to, we));
+      var ws = new Date(cur); ws.setHours(Math.floor(w.start), (w.start % 1) * 60, 0, 0);
+      var we = new Date(cur); we.setHours(Math.floor(w.end), (w.end % 1) * 60, 0, 0);
+      var s = new Date(Math.max(cur, ws, from));
+      var e = new Date(Math.min(to, we));
       if (e > s) total += e - s;
     }
     cur.setDate(cur.getDate() + 1); cur.setHours(0, 0, 0, 0);
@@ -103,241 +99,252 @@ function workingMs(from, to, assignee, status) {
 }
 
 function fmtMs(ms) {
-  const h = Math.floor(ms / 3600000), m = Math.round((ms % 3600000) / 60000);
-  return m > 0 ? `${h}h ${m}m` : `${h}h`;
+  var h = Math.floor(ms / 3600000), m = Math.round((ms % 3600000) / 60000);
+  return m > 0 ? h + "h " + m + "m" : h + "h";
 }
 
 function fmt(d) { return d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" }); }
 function fmtFull(d) { return d.toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }); }
 
-function buildTasks(events) {
-  const byId = {};
-  const sorted = [...events].sort((a, b) => new Date(a.ts) - new Date(b.ts));
-  sorted.forEach((ev, i) => {
-    if (!STATUS_COLORS[ev.to]) return;
-    if (ev.to === "blocked") {
-      const nextEv = sorted.slice(i + 1).find(e => e.id === ev.id);
-      if (nextEv && (new Date(nextEv.ts) - new Date(ev.ts)) / 1000 < MIN_SEC) return;
-    }
-    if (!byId[ev.id]) byId[ev.id] = { id: ev.id, name: ev.name, assignee: ev.assignee, sprint: ev.sprint, pts: ev.pts, segments: [], sprints: new Set() };
-    byId[ev.id].sprints.add(ev.sprint);
-    const start = toLocal(ev.ts, ev.assignee);
-    const nextEv = sorted.slice(i + 1).find(e => e.id === ev.id);
-    const isComplete = ev.to === "complete";
-    const end = (nextEv || isComplete) ? toLocal((nextEv || ev).ts, ev.assignee) : new Date();
-    const isActive = !nextEv && !isComplete;
-    if (nextEv && isComplete) { byId[ev.id].segments.push({ status: ev.to, start, end: toLocal(ev.ts, ev.assignee), isActive: false }); return; }
-    byId[ev.id].segments.push({ status: ev.to, start, end, isActive });
-  });
-  return Object.values(byId).filter(t => t.segments.length > 0);
+function parseSprintDates(sprintName) {
+  var m = sprintName.match(/\((\d+)\/(\d+)\s*-\s*(\d+)\/(\d+)\)/);
+  if (!m) return null;
+  var year = new Date().getFullYear();
+  var start = new Date(year, parseInt(m[1]) - 1, parseInt(m[2]), 0, 0, 0);
+  var end   = new Date(year, parseInt(m[3]) - 1, parseInt(m[4]), 23, 59, 59);
+  return { start: start, end: end };
 }
 
-// Build shade segments (off-hours + weekends) between minDate and maxDate
+function taskOverlapsSprint(task, sprintName) {
+  var range = parseSprintDates(sprintName);
+  if (!range) return task.sprints.indexOf(sprintName) >= 0;
+  for (var i = 0; i < task.segments.length; i++) {
+    var seg = task.segments[i];
+    if (seg.start <= range.end && seg.end >= range.start) return true;
+  }
+  return false;
+}
+
+function buildTasks(events) {
+  var byId = {};
+  var sorted = events.slice().sort(function(a, b) { return new Date(a.ts) - new Date(b.ts); });
+
+  for (var i = 0; i < sorted.length; i++) {
+    var ev = sorted[i];
+    if (!STATUS_COLORS[ev.to]) continue;
+    if (ev.to === "blocked") {
+      var nextBlk = null;
+      for (var k = i + 1; k < sorted.length; k++) { if (sorted[k].id === ev.id) { nextBlk = sorted[k]; break; } }
+      if (nextBlk && (new Date(nextBlk.ts) - new Date(ev.ts)) / 1000 < MIN_SEC) continue;
+    }
+    if (!byId[ev.id]) byId[ev.id] = { id: ev.id, name: ev.name, assignee: ev.assignee, pts: ev.pts, segments: [], sprints: [] };
+    if (byId[ev.id].sprints.indexOf(ev.sprint) < 0) byId[ev.id].sprints.push(ev.sprint);
+
+    var start = toLocal(ev.ts, ev.assignee);
+    var nextEv = null;
+    for (var j = i + 1; j < sorted.length; j++) { if (sorted[j].id === ev.id) { nextEv = sorted[j]; break; } }
+
+    var isComplete = ev.to === "complete";
+    var end = nextEv ? toLocal(nextEv.ts, ev.assignee) : (isComplete ? start : new Date());
+    byId[ev.id].segments.push({ status: ev.to, start: start, end: end, isActive: !nextEv && !isComplete });
+  }
+
+  var result = [];
+  for (var id in byId) { if (byId[id].segments.length > 0) result.push(byId[id]); }
+  return result;
+}
+
 function buildShadeSegments(minDate, maxDate, workHours) {
-  const segments = [];
-  let cur = new Date(minDate);
-  cur.setMinutes(0, 0, 0);
-
+  var segments = [];
+  var cur = new Date(minDate); cur.setMinutes(0, 0, 0);
   while (cur < maxDate) {
-    const day = cur.getDay();
-    const isWeekend = day === 0 || day === 6;
-
+    var day = cur.getDay();
+    var isWeekend = day === 0 || day === 6;
     if (isWeekend) {
-      // shade entire day as weekend
-      const dayEnd = new Date(cur); dayEnd.setDate(dayEnd.getDate() + 1); dayEnd.setHours(0, 0, 0, 0);
-      const s = new Date(Math.max(cur, minDate));
-      const e = new Date(Math.min(dayEnd, maxDate));
+      var dayEnd = new Date(cur); dayEnd.setDate(dayEnd.getDate() + 1); dayEnd.setHours(0, 0, 0, 0);
+      var s = new Date(Math.max(cur, minDate));
+      var e = new Date(Math.min(dayEnd, maxDate));
       if (e > s) segments.push({ start: s, end: e, type: "weekend" });
       cur = dayEnd;
     } else {
-      const wsH = Math.floor(workHours.start), wsM = (workHours.start % 1) * 60;
-      const weH = Math.floor(workHours.end), weM = (workHours.end % 1) * 60;
-      const dayStart = new Date(cur); dayStart.setHours(0, 0, 0, 0);
-      const workStart = new Date(cur); workStart.setHours(wsH, wsM, 0, 0);
-      const workEnd = new Date(cur); workEnd.setHours(weH, weM, 0, 0);
-      const dayEnd = new Date(cur); dayEnd.setDate(dayEnd.getDate() + 1); dayEnd.setHours(0, 0, 0, 0);
-
-      // before work
-      const bs = new Date(Math.max(dayStart, minDate));
-      const be = new Date(Math.min(workStart, maxDate));
+      var wsH = Math.floor(workHours.start), wsM = (workHours.start % 1) * 60;
+      var weH = Math.floor(workHours.end), weM = (workHours.end % 1) * 60;
+      var dayStart = new Date(cur); dayStart.setHours(0, 0, 0, 0);
+      var workStart = new Date(cur); workStart.setHours(wsH, wsM, 0, 0);
+      var workEnd = new Date(cur); workEnd.setHours(weH, weM, 0, 0);
+      var dayEnd2 = new Date(cur); dayEnd2.setDate(dayEnd2.getDate() + 1); dayEnd2.setHours(0, 0, 0, 0);
+      var bs = new Date(Math.max(dayStart, minDate));
+      var be = new Date(Math.min(workStart, maxDate));
       if (be > bs) segments.push({ start: bs, end: be, type: "offhours" });
-
-      // after work
-      const as_ = new Date(Math.max(workEnd, minDate));
-      const ae = new Date(Math.min(dayEnd, maxDate));
-      if (ae > as_) segments.push({ start: as_, end: ae, type: "offhours" });
-
-      cur = dayEnd;
+      var as2 = new Date(Math.max(workEnd, minDate));
+      var ae = new Date(Math.min(dayEnd2, maxDate));
+      if (ae > as2) segments.push({ start: as2, end: ae, type: "offhours" });
+      cur = dayEnd2;
     }
   }
   return segments;
 }
 
-// Parse sprint date range from name e.g. "Sprint 3 (3/25 - 3/31)"
-function parseSprintDates(sprintName) {
-  const m = sprintName.match(/\((\d+)\/(\d+)\s*-\s*(\d+)\/(\d+)\)/);
-  if (!m) return null;
-  const year = new Date().getFullYear();
-  const start = new Date(year, parseInt(m[1])-1, parseInt(m[2]), 0, 0, 0);
-  const end   = new Date(year, parseInt(m[3])-1, parseInt(m[4]), 23, 59, 59);
-  return { start, end };
-}
-
-function taskOverlapsSprint(task, sprintName) {
-  const range = parseSprintDates(sprintName);
-  if (!range) return task.sprints.has(sprintName);
-  return task.segments.some(s => s.start <= range.end && s.end >= range.start);
-}
-  const lines = text.trim().split("\n").slice(1);
-  return lines.map(line => {
-    const cols = line.split(",").map(c => c.replace(/^"|"$/g, "").trim());
-    return { id: cols[0], name: cols[1], assignee: cols[2], from: cols[3], to: cols[4], ts: cols[5], sprint: cols[6], pts: parseInt(cols[7]) || 0 };
-  }).filter(r => r.id && r.ts);
+function parseCSV(text) {
+  var lines = text.trim().split("\n").slice(1);
+  var result = [];
+  for (var i = 0; i < lines.length; i++) {
+    var cols = lines[i].split(",").map(function(c) { return c.replace(/^"|"$/g, "").trim(); });
+    if (cols[0] && cols[5]) {
+      result.push({ id: cols[0], name: cols[1], assignee: cols[2], from: cols[3], to: cols[4], ts: cols[5], sprint: cols[6], pts: parseInt(cols[7]) || 0 });
+    }
+  }
+  return result;
 }
 
 function render(events, activeSprint, activeAssignee) {
-  const allTasks = buildTasks(events);
-  const sprints = [...new Set(allTasks.map(t => t.sprint))];
-  const assignees = [...new Set(allTasks.map(t => t.assignee))];
-  const tasks = allTasks
-    .filter(t => activeSprint === "All" || taskOverlapsSprint(t, activeSprint))
-    .filter(t => activeAssignee === "All" || t.assignee === activeAssignee);
+  var allTasks = buildTasks(events);
+  var sprintSet = {}, assigneeSet = {};
+  allTasks.forEach(function(t) {
+    t.sprints.forEach(function(s) { sprintSet[s] = true; });
+    assigneeSet[t.assignee] = true;
+  });
+  var sprints = Object.keys(sprintSet).sort();
+  var assignees = Object.keys(assigneeSet).sort();
 
-  if (!tasks.length) { document.getElementById("app").innerHTML = "<p style='color:#aaa;padding:20px'>No tasks found for this filter.</p>"; return; }
+  var tasks = allTasks.filter(function(t) {
+    return (activeSprint === "All" || taskOverlapsSprint(t, activeSprint)) &&
+           (activeAssignee === "All" || t.assignee === activeAssignee);
+  });
 
-  const allDates = tasks.flatMap(t => t.segments.flatMap(s => [s.start, s.end]));
-  const minDate = new Date(Math.min(...allDates));
-  const maxDate = new Date(Math.max(...allDates));
-  const totalMs = maxDate - minDate;
-  const pct = d => ((d - minDate) / totalMs) * 100;
-
-  // Determine working hours for shading
-  const shadeHours = (activeAssignee !== "All" && WORKING_HOURS[activeAssignee])
-    ? WORKING_HOURS[activeAssignee]
-    : WORKING_HOURS.default;
-
-  const shadeSegs = buildShadeSegments(minDate, maxDate, shadeHours);
-
-  // Day boundary lines
-  const dayLines = [];
-  let dl = new Date(minDate); dl.setDate(dl.getDate() + 1); dl.setHours(0, 0, 0, 0);
-  while (dl < maxDate) { dayLines.push(new Date(dl)); dl.setDate(dl.getDate() + 1); }
-
-  // Axis ticks
-  const axisDays = [];
-  let ad = new Date(minDate); ad.setHours(0, 0, 0, 0);
-  while (ad <= maxDate) { if (ad.getDay() !== 0 && ad.getDay() !== 6) axisDays.push(new Date(ad)); ad.setDate(ad.getDate() + 1); }
-  const step = Math.ceil(axisDays.length / 8);
-  const ticks = axisDays.filter((_, i) => i % step === 0);
-
-  const avgCycle = (() => {
-    const tots = tasks.map(t => t.segments.filter(s => s.status === "in progress").reduce((a, s) => a + workingMs(s.start, s.end, t.assignee, "in progress"), 0));
-    return tots.length ? fmtMs(tots.reduce((a, v) => a + v, 0) / tots.length) : "—";
-  })();
-  const avgReview = (() => {
-    const tots = tasks.map(t => t.segments.filter(s => s.status === "internal review").reduce((a, s) => a + workingMs(s.start, s.end, t.assignee, "internal review"), 0));
-    return tots.length ? fmtMs(tots.reduce((a, v) => a + v, 0) / tots.length) : "—";
-  })();
-  const reworkCount = tasks.filter(t => t.segments.filter(s => s.status === "in progress").length >= 2).length;
-
-  const sprintGroups = [];
-  if (activeSprint === "All") {
-    let cur = null, startIdx = 0;
-    tasks.forEach((t, i) => {
-      if (t.sprint !== cur) { if (cur) sprintGroups.push({ label: cur, startIdx, endIdx: i }); cur = t.sprint; startIdx = i; }
-    });
-    if (cur) sprintGroups.push({ label: cur, startIdx, endIdx: tasks.length });
+  if (!tasks.length) {
+    document.getElementById("app").innerHTML = "<p style='color:#aaa;padding:20px'>No tasks found for this filter.</p>";
+    document.getElementById("app").style.display = "block";
+    return;
   }
 
-  const ROW_H = 42;
-  const totalRows = tasks.length;
-  const chartH = totalRows * ROW_H;
+  var allDates = [];
+  tasks.forEach(function(t) { t.segments.forEach(function(s) { allDates.push(s.start, s.end); }); });
+  var minDate = new Date(Math.min.apply(null, allDates));
+  var maxDate = new Date(Math.max.apply(null, allDates));
+  var totalMs = maxDate - minDate;
+  function pct(d) { return ((d - minDate) / totalMs) * 100; }
 
-  const shadeHTML = shadeSegs.map(s => {
-    const l = pct(s.start), w = Math.max(0, pct(s.end) - pct(s.start));
-    return `<div class="shade shade-${s.type}" style="left:${l}%;width:${w}%;top:0;height:${chartH}px;position:absolute;z-index:1;pointer-events:none"></div>`;
+  var shadeHours = (activeAssignee !== "All" && WORKING_HOURS[activeAssignee]) ? WORKING_HOURS[activeAssignee] : WORKING_HOURS["default"];
+  var shadeSegs = buildShadeSegments(minDate, maxDate, shadeHours);
+
+  var dayLines = [];
+  var dl = new Date(minDate); dl.setDate(dl.getDate() + 1); dl.setHours(0, 0, 0, 0);
+  while (dl < maxDate) { dayLines.push(new Date(dl)); dl.setDate(dl.getDate() + 1); }
+
+  var axisDays = [];
+  var ad = new Date(minDate); ad.setHours(0, 0, 0, 0);
+  while (ad <= maxDate) { if (ad.getDay() !== 0 && ad.getDay() !== 6) axisDays.push(new Date(ad)); ad.setDate(ad.getDate() + 1); }
+  var step = Math.ceil(axisDays.length / 8);
+  var ticks = axisDays.filter(function(_, i) { return i % step === 0; });
+
+  var avgCycle = (function() {
+    var tots = tasks.map(function(t) { return t.segments.filter(function(s) { return s.status === "in progress"; }).reduce(function(a, s) { return a + workingMs(s.start, s.end, t.assignee, "in progress"); }, 0); });
+    return tots.length ? fmtMs(tots.reduce(function(a, v) { return a + v; }, 0) / tots.length) : "—";
+  })();
+  var avgReview = (function() {
+    var tots = tasks.map(function(t) { return t.segments.filter(function(s) { return s.status === "internal review"; }).reduce(function(a, s) { return a + workingMs(s.start, s.end, t.assignee, "internal review"); }, 0); });
+    return tots.length ? fmtMs(tots.reduce(function(a, v) { return a + v; }, 0) / tots.length) : "—";
+  })();
+  var reworkCount = tasks.filter(function(t) { return t.segments.filter(function(s) { return s.status === "in progress"; }).length >= 2; }).length;
+
+  var sprintGroups = [];
+  if (activeSprint === "All") {
+    var cur2 = null, startIdx = 0;
+    tasks.forEach(function(t, i) {
+      var sp = t.sprints[0];
+      if (sp !== cur2) { if (cur2) sprintGroups.push({ label: cur2, startIdx: startIdx, endIdx: i }); cur2 = sp; startIdx = i; }
+    });
+    if (cur2) sprintGroups.push({ label: cur2, startIdx: startIdx, endIdx: tasks.length });
+  }
+
+  var ROW_H = 42;
+  var chartH = tasks.length * ROW_H;
+
+  var shadeHTML = shadeSegs.map(function(s) {
+    var l = pct(s.start), w = Math.max(0, pct(s.end) - pct(s.start));
+    var bg = s.type === "weekend"
+      ? "repeating-linear-gradient(135deg,rgba(0,0,0,0.08) 0px,rgba(0,0,0,0.08) 3px,transparent 3px,transparent 8px)"
+      : "repeating-linear-gradient(135deg,rgba(0,0,0,0.04) 0px,rgba(0,0,0,0.04) 3px,transparent 3px,transparent 8px)";
+    return '<div style="position:absolute;left:' + l + '%;width:' + w + '%;top:0;height:' + chartH + 'px;background:' + bg + ';pointer-events:none;z-index:1"></div>';
   }).join("");
 
-  const dayLineHTML = dayLines.map(d => {
-    const l = pct(d);
-    return `<div class="day-line" style="left:${l}%;height:${chartH}px"></div>`;
+  var dayLineHTML = dayLines.map(function(d) {
+    return '<div style="position:absolute;left:' + pct(d) + '%;top:0;height:' + chartH + 'px;border-left:1px solid #555;opacity:0.2;pointer-events:none;z-index:3"></div>';
   }).join("");
 
-  const app = document.getElementById("app");
-  app.innerHTML = `
-    <div class="filters">
-      <div class="filter-group">
-        <span class="filter-label">Sprint</span>
-        <select class="filter-select" onchange="rerender(this.value, activeAssignee)">
-          <option value="All">All</option>
-          ${[...sprints].reverse().map(s => `<option value="${s}" ${activeSprint === s ? "selected" : ""}>${s}</option>`).join("")}
-        </select>
-      </div>
-      <div class="filter-group">
-        <span class="filter-label">Assignee</span>
-        <select class="filter-select" onchange="rerender(activeSprint, this.value)">
-          <option value="All">All</option>
-          ${assignees.map(a => `<option value="${a}" ${activeAssignee === a ? "selected" : ""}>${a}</option>`).join("")}
-        </select>
-      </div>
-    </div>
-    <div class="cards">
-      <div class="card"><div class="card-label">Avg cycle time</div><div class="card-value">${avgCycle}</div><div class="card-sub">working hrs in progress</div></div>
-      <div class="card"><div class="card-label">Avg review time</div><div class="card-value">${avgReview}</div><div class="card-sub">working hrs in review</div></div>
-      <div class="card"><div class="card-label">Tasks with rework</div><div class="card-value">${reworkCount} / ${tasks.length}</div><div class="card-sub">≥2 in progress cycles</div></div>
-    </div>
-    <div class="legend">
-      ${Object.entries(STATUS_COLORS).map(([, c]) => `<div class="legend-item"><div class="legend-dot" style="background:${c.bar}"></div>${c.label}</div>`).join("")}
-      <div class="legend-item"><div class="legend-dot" style="background:repeating-linear-gradient(135deg,rgba(0,0,0,0.15) 0px,rgba(0,0,0,0.15) 3px,transparent 3px,transparent 8px);border:0.5px solid #ddd"></div>Off hours / weekend</div>
-    </div>
-    <div class="chart-wrap">
-      <div class="chart" id="chart" style="position:relative">
-        <div style="position:absolute;left:190px;right:0;top:0;height:${chartH}px;overflow:hidden">
-          ${shadeHTML}
-          ${dayLineHTML}
-        </div>
-        ${tasks.map((task, i) => `
-          <div class="row">
-            <div class="row-label">
-              <div class="name">${task.name}</div>
-              <div class="sub">${task.assignee.split(" ")[0]} · ${task.pts}pt${task.pts !== 1 ? "s" : ""}</div>
-            </div>
-            <div class="row-bars">
-              ${task.segments.map(seg => {
-                const left = pct(seg.start), width = Math.max(0.4, pct(seg.end) - pct(seg.start));
-                const c = STATUS_COLORS[seg.status];
-                const wm = workingMs(seg.start, seg.end, task.assignee, seg.status);
-                return `<div class="bar" style="left:${left}%;width:${width}%;background:${c.bar}"
-                  data-task="${task.name.replace(/"/g,'&quot;')}"
-                  data-assignee="${task.assignee}"
-                  data-status="${seg.status}"
-                  data-active="${seg.isActive ? 'true' : 'false'}"
-                  data-wm="${fmtMs(wm)}"
-                  data-start="${fmtFull(seg.start)}"
-                  data-end="${fmtFull(seg.end)}"
-                  onmouseenter="showTip(event)" onmousemove="moveTip(event)" onmouseleave="hideTip()"></div>`;
-              }).join("")}
-            </div>
-          </div>`).join("")}
-        ${sprintGroups.map(g => `
-          <div class="sprint-label" style="top:${g.startIdx * ROW_H}px;width:178px;height:${(g.endIdx - g.startIdx) * ROW_H}px">
-            <div class="sprint-label-inner">${g.label}</div>
-          </div>`).join("")}
-        <div class="axis">
-          <div class="axis-spacer"></div>
-          <div class="axis-labels">
-            ${ticks.map(t => `<span class="axis-label" style="left:${pct(t)}%">${fmt(t)}</span>`).join("")}
-          </div>
-        </div>
-      </div>
-    </div>
-    <div class="note">Timestamps converted to local time per assignee (Márcio UTC+1 · Adriaan UTC+2). Shading reflects off-hours for ${activeAssignee === "All" ? "default schedule (10h–19h)" : activeAssignee}. Blocked transitions &lt;10s filtered out.</div>
-  `;
+  var rowsHTML = tasks.map(function(task, i) {
+    var barsHTML = task.segments.map(function(seg) {
+      var left = pct(seg.start), width = Math.max(0.4, pct(seg.end) - pct(seg.start));
+      var c = STATUS_COLORS[seg.status];
+      var wm = workingMs(seg.start, seg.end, task.assignee, seg.status);
+      return '<div class="bar" style="left:' + left + '%;width:' + width + '%;background:' + c.bar + '"' +
+        ' data-task="' + task.name.replace(/"/g, "&quot;") + '"' +
+        ' data-assignee="' + task.assignee + '"' +
+        ' data-status="' + seg.status + '"' +
+        ' data-active="' + seg.isActive + '"' +
+        ' data-wm="' + fmtMs(wm) + '"' +
+        ' data-start="' + fmtFull(seg.start) + '"' +
+        ' data-end="' + fmtFull(seg.end) + '"' +
+        ' onmouseenter="showTip(event)" onmousemove="moveTip(event)" onmouseleave="hideTip()"></div>';
+    }).join("");
+    return '<div class="row" style="background:' + (i % 2 === 0 ? "transparent" : "rgba(0,0,0,0.015)") + '">' +
+      '<div class="row-label"><div class="name">' + task.name + '</div><div class="sub">' + task.assignee.split(" ")[0] + ' &middot; ' + task.pts + 'pt' + (task.pts !== 1 ? "s" : "") + '</div></div>' +
+      '<div class="row-bars">' + barsHTML + '</div></div>';
+  }).join("");
+
+  var sprintLabelsHTML = sprintGroups.map(function(g) {
+    return '<div class="sprint-label" style="top:' + (g.startIdx * ROW_H) + 'px;width:178px;height:' + ((g.endIdx - g.startIdx) * ROW_H) + 'px">' +
+      '<div class="sprint-label-inner">' + g.label + '</div></div>';
+  }).join("");
+
+  var ticksHTML = ticks.map(function(t) {
+    return '<span class="axis-label" style="left:' + pct(t) + '%">' + fmt(t) + '</span>';
+  }).join("");
+
+  var sprintOptions = sprints.slice().reverse().map(function(s) {
+    return '<option value="' + s + '"' + (activeSprint === s ? " selected" : "") + '>' + s + '</option>';
+  }).join("");
+
+  var assigneeOptions = assignees.map(function(a) {
+    return '<option value="' + a + '"' + (activeAssignee === a ? " selected" : "") + '>' + a + '</option>';
+  }).join("");
+
+  var app = document.getElementById("app");
+  app.innerHTML =
+    '<div class="filters">' +
+      '<div class="filter-group"><span class="filter-label">Sprint</span>' +
+        '<select class="filter-select" onchange="rerender(this.value, activeAssignee)">' +
+          '<option value="All">All</option>' + sprintOptions +
+        '</select></div>' +
+      '<div class="filter-group"><span class="filter-label">Assignee</span>' +
+        '<select class="filter-select" onchange="rerender(activeSprint, this.value)">' +
+          '<option value="All">All</option>' + assigneeOptions +
+        '</select></div>' +
+    '</div>' +
+    '<div class="cards">' +
+      '<div class="card"><div class="card-label">Avg cycle time</div><div class="card-value">' + avgCycle + '</div><div class="card-sub">working hrs in progress</div></div>' +
+      '<div class="card"><div class="card-label">Avg review time</div><div class="card-value">' + avgReview + '</div><div class="card-sub">working hrs in review</div></div>' +
+      '<div class="card"><div class="card-label">Tasks with rework</div><div class="card-value">' + reworkCount + ' / ' + tasks.length + '</div><div class="card-sub">≥2 in progress cycles</div></div>' +
+    '</div>' +
+    '<div class="legend">' +
+      Object.entries(STATUS_COLORS).map(function(e) {
+        return '<div class="legend-item"><div class="legend-dot" style="background:' + e[1].bar + '"></div>' + e[1].label + '</div>';
+      }).join("") +
+      '<div class="legend-item"><div class="legend-dot" style="background:repeating-linear-gradient(135deg,rgba(0,0,0,0.1) 0px,rgba(0,0,0,0.1) 3px,transparent 3px,transparent 8px);border:0.5px solid #ddd"></div>Off hours / weekend</div>' +
+    '</div>' +
+    '<div class="chart-wrap"><div class="chart" style="position:relative">' +
+      '<div style="position:absolute;left:190px;right:0;top:0;height:' + chartH + 'px;overflow:hidden">' + shadeHTML + dayLineHTML + '</div>' +
+      rowsHTML + sprintLabelsHTML +
+      '<div class="axis"><div class="axis-spacer"></div><div class="axis-labels">' + ticksHTML + '</div></div>' +
+    '</div></div>' +
+    '<div class="note">Timestamps converted to local time per assignee (Márcio UTC+1 · Adriaan UTC+2). Shading reflects off-hours for ' + (activeAssignee === "All" ? "default schedule (10h–19h)" : activeAssignee) + '. Blocked transitions &lt;10s filtered out.</div>';
+
   app.style.display = "block";
 }
 
 function showTip(e) {
-  const t = document.getElementById("tooltip"), b = e.target;
+  var t = document.getElementById("tooltip"), b = e.target;
   document.getElementById("tt-title").textContent = b.dataset.task;
   document.getElementById("tt-status").textContent = STATUS_COLORS[b.dataset.status].label;
   document.getElementById("tt-status").style.color = STATUS_COLORS[b.dataset.status].bar;
@@ -346,24 +353,24 @@ function showTip(e) {
   t.style.display = "block"; moveTip(e);
 }
 function moveTip(e) {
-  const t = document.getElementById("tooltip");
+  var t = document.getElementById("tooltip");
   t.style.top = (e.clientY - 110) + "px";
   t.style.left = (e.clientX + 12) + "px";
 }
 function hideTip() { document.getElementById("tooltip").style.display = "none"; }
 
-let allEvents = [], activeSprint = "All", activeAssignee = "All";
+var allEvents = [], activeSprint = "All", activeAssignee = "All";
 function rerender(sprint, assignee) {
   activeSprint = sprint; activeAssignee = assignee;
   render(allEvents, activeSprint, activeAssignee);
 }
 
 async function load() {
-  const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(SHEET_NAME)}`;
+  var url = "https://docs.google.com/spreadsheets/d/" + SHEET_ID + "/gviz/tq?tqx=out:csv&sheet=" + encodeURIComponent(SHEET_NAME);
   try {
-    const res = await fetch(url);
+    var res = await fetch(url);
     if (!res.ok) throw new Error("Failed to fetch");
-    const text = await res.text();
+    var text = await res.text();
     allEvents = parseCSV(text);
     document.getElementById("loading").style.display = "none";
     render(allEvents, "All", "All");
